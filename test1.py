@@ -1,5 +1,5 @@
-from finesse import FSM, State, Transition
-from finesse.core.expr import sig, const
+from finesse_fsm import FSM, State, Transition
+from finesse_fsm.core.expr import sig, const
 
 
 def build_fsm() -> FSM:

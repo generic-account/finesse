@@ -1,7 +1,7 @@
 # backtrack_example.py
-from finesse import FSM, State, Transition
-from finesse.export.verilog import emit_fsm_oneprocess_enum
-from finesse.core.expr import sig, const
+from finesse_fsm import FSM, State, Transition
+from finesse_fsm.export.verilog import emit_fsm_oneprocess_enum
+from finesse_fsm.core.expr import sig, const
 
 
 def build_backtrack_fsm() -> FSM:
