@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import List, Optional
 
-from ..core import FSM, State, Transition
+from ..core import FSM
 
 
 def _state_bits(num_states: int) -> int:
@@ -46,15 +46,14 @@ def emit_fsm_oneprocess_enum(
         module_name = fsm.name
 
     # Order states deterministically
-    states: List[State] = list(fsm.states.values())
-    if not states:
-        raise ValueError("FSM has no states")
+    model = fsm.compile()
+    states = model.states
 
     # Determine reset state
-    if fsm.default_state is not None:
-        reset_state_name = fsm.default_state.name
+    if model.default_state is not None:
+        reset_state_name = model.default_state
     else:
-        reset_state_name = states[0].name
+        reset_state_name = states[0]
 
     # Compute bits for enum
     state_bits = _state_bits(len(states))
@@ -72,7 +71,7 @@ def emit_fsm_oneprocess_enum(
     ports.append(f"    input  logic {rst}")
 
     # FSM inputs
-    for name, width in fsm.inputs.items():
+    for name, width in model.inputs.items():
         if width <= 1:
             ports.append(f"    input  logic {name}")
         else:
@@ -96,7 +95,7 @@ def emit_fsm_oneprocess_enum(
     lines.append(f"    typedef enum logic [{state_bits-1}:0] {{")
     for i, s in enumerate(states):
         sep = "," if i < len(states) - 1 else ""
-        lines.append(f"        {s.name}{sep}")
+        lines.append(f"        {s}{sep}")
     lines.append("    } state_t;")
     lines.append("")
     lines.append("    state_t state_q;")
@@ -113,18 +112,13 @@ def emit_fsm_oneprocess_enum(
     lines.append("            done_o  <= 1'b0;")
     lines.append("            case (state_q)")
 
-    # Group transitions by source state
-    transitions_by_src: Dict[str, List[Transition]] = {s.name: [] for s in states}
-    for t in fsm.transitions:
-        transitions_by_src[t.src].append(t)
-
     # Per-state case arms
     for s in states:
-        lines.append(f"                {s.name}: begin")
-        outgoing = transitions_by_src.get(s.name, [])
+        lines.append(f"                {s}: begin")
+        outgoing = model.outgoing[s]
 
         # Idle/reset state: ready_o high, done_o low
-        if s.name == reset_state_name:
+        if s == reset_state_name:
             lines.append("                    ready_o <= 1'b1;")
             lines.append("                    done_o  <= 1'b0;")
 
@@ -134,7 +128,7 @@ def emit_fsm_oneprocess_enum(
             lines.append("                    done_o  <= 1'b1;")
 
         if outgoing:
-            for idx, t in enumerate(outgoing):
+            for idx, (_, t) in enumerate(outgoing):
                 cond = t.cond.to_verilog()
                 if idx == 0:
                     lines.append(f"                    if ({cond}) begin")
@@ -143,10 +137,10 @@ def emit_fsm_oneprocess_enum(
                 lines.append(f"                        state_q <= {t.dst};")
                 lines.append("                    end")
             # Explicit stay in same state (compact one-line form)
-            lines.append(f"                    else state_q <= {s.name};")
+            lines.append(f"                    else state_q <= {s};")
         else:
-            # No outgoing transitions: go back to reset/idle state
-            lines.append(f"                    state_q <= {reset_state_name};")
+            # No outgoing transitions: stay in the current state
+            lines.append(f"                    state_q <= {s};")
 
         lines.append("                end")
 

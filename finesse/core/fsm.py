@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 from .expr import Expr
+
+if TYPE_CHECKING:
+    from ..simulation import Simulator
+    from .model import FSMModel
 
 
 @dataclass
@@ -21,7 +25,7 @@ class State:
     transitions: List["Transition"] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(frozen=True, eq=False)
 class Transition:
     """
     A directed edge between two states.
@@ -51,6 +55,7 @@ class FSM:
     transitions: List[Transition] = field(default_factory=list)
     current_state: Optional[State] = None
     default_state: Optional[State] = None
+    _session: Optional[Simulator] = field(default=None, init=False, repr=False)
 
     def add_state(self, state: State, *, default: bool = False) -> None:
         """
@@ -72,6 +77,7 @@ class FSM:
 
         if self.current_state is None and state.default:
             self.current_state = state
+        self._session = None
 
     def add_states(self, states: List[State], *, default: Optional[str] = None) -> None:
         """
@@ -94,6 +100,7 @@ class FSM:
 
         self.transitions.append(transition)
         self.states[transition.src].transitions.append(transition)
+        self._session = None
 
     def reset(self) -> None:
         """
@@ -102,6 +109,7 @@ class FSM:
         if self.default_state is None:
             raise RuntimeError("FSM has no default state defined")
         self.current_state = self.default_state
+        self._session = None
 
     def set_state(self, state_name: str) -> None:
         """
@@ -110,6 +118,17 @@ class FSM:
         if state_name not in self.states:
             raise ValueError(f"Unknown state {state_name!r}")
         self.current_state = self.states[state_name]
+        self._session = None
+
+    def simulator(self, *, initial_state: Optional[str] = None, record: bool = True) -> Simulator:
+        from ..simulation import Simulator
+
+        return Simulator(self, initial_state=initial_state, record=record)
+
+    def compile(self) -> FSMModel:
+        from .model import FSMModel
+
+        return FSMModel.from_fsm(self)
 
     def step(self, inputs: Dict[str, int]) -> State:
         """
@@ -119,16 +138,10 @@ class FSM:
         - Takes the first transition whose condition is True.
         - If none match, stays in the current state.
         """
-        if self.current_state is None:
-            if self.default_state is None:
-                raise RuntimeError("FSM has no current_state and no default_state")
-            self.current_state = self.default_state
-
-        state = self.current_state
-        for t in state.transitions:
-            if bool(t.cond.eval(inputs)):
-                self.current_state = self.states[t.dst]
-                break
+        initial = self.current_state.name if self.current_state is not None else None
+        if self._session is None or self._session.current_state != initial:
+            self._session = self.simulator(initial_state=initial, record=False)
+        self.current_state = self.states[self._session.step(inputs).dst]
 
         return self.current_state
 
@@ -148,29 +161,9 @@ class FSM:
         If show_conditions is True, label edges with the transition condition
         (rendered via Expr.to_verilog()). If False, omit edge labels.
         """
-        lines: List[str] = ["stateDiagram-v2"]
+        from ..visualization.mermaid import to_mermaid
 
-        if self.default_state is not None:
-            lines.append(f"    [*] --> {self.default_state.name}")
-
-        for s in self.states.values():
-            lines.append(f"    state {s.name}")
-
-        for t in self.transitions:
-            if show_conditions:
-                try:
-                    label = t.cond.to_verilog()
-                except Exception:
-                    label = ""
-            else:
-                label = ""
-
-            if label:
-                lines.append(f"    {t.src} --> {t.dst} : {label}")
-            else:
-                lines.append(f"    {t.src} --> {t.dst}")
-
-        return "\n".join(lines)
+        return to_mermaid(self, show_conditions=show_conditions)
 
     def visualize(
         self,
